@@ -1,0 +1,94 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  
+}
+
+enum DictionaryTag {
+  NEOLOGISM
+  ANGLICISM
+  SURZHYK
+  SLANG
+  OTHER
+}
+
+enum WordStatus {
+  ACTIVE
+  BANNED
+}
+
+enum GameStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+}
+
+model Room {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  createdAt DateTime @default(now())
+
+  players   Player[]
+  games     Game[]
+}
+
+model Player {
+  id        String   @id @default(cuid())
+  roomId    String
+  name      String
+  createdAt DateTime @default(now())
+
+  room      Room     @relation(fields: [roomId], references: [id])
+  moves     Move[]
+}
+
+model Game {
+  id          String     @id @default(cuid())
+  roomId      String
+  status      GameStatus @default(WAITING)
+  turnPlayerId String?   // чия черга
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // зберігаємо стан як JSON: поле, мішок, руки, очки
+  state       Json
+
+  room        Room       @relation(fields: [roomId], references: [id])
+  moves       Move[]
+}
+
+model Move {
+  id        String   @id @default(cuid())
+  gameId    String
+  playerId  String
+  createdAt DateTime @default(now())
+
+  // слово + координати + напрям + поставлені фішки + очки
+  payload   Json
+  score     Int
+
+  game      Game     @relation(fields: [gameId], references: [id])
+  player    Player   @relation(fields: [playerId], references: [id])
+}
+
+model DictionaryWord {
+  id         String       @id @default(cuid())
+  word       String       @unique
+  status     WordStatus   @default(ACTIVE)
+  tags       DictionaryTag[]
+  note       String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  // хто додав (необов’язково)
+  addedBy    String?
+}
