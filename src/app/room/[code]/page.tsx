@@ -60,6 +60,25 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomCode])
 
+  useEffect(() => {
+    if (!room || playerId) return
+    if (!roomCode || !playerName) return
+
+    // якщо є кімната, але нема playerId — пробуємо знову join
+    fetch('/api/room/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: roomCode, name: playerName }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.ok && data?.player?.id) {
+          localStorage.setItem(LS.playerId, data.player.id)
+        }
+      })
+      .catch(() => {})
+  }, [room, roomCode, playerId, playerName])
+
   async function copyCode() {
     try {
       await navigator.clipboard.writeText(roomCode)
@@ -120,6 +139,7 @@ export default function RoomPage() {
   }
 
   const players = room?.players ?? []
+  console.log('ROOM DEBUG', { roomCode, room, players, playerId, playerName })
   const canStart = players.length >= 2
 
   return (
@@ -171,8 +191,10 @@ export default function RoomPage() {
         </div>
 
         <div style={{ display: 'grid', gap: 8 }}>
-          {players.map((p) => {
-            const isYou = playerId && p.id === playerId
+          {players.map((p, idx) => {
+            if (!p || !p.id) return null
+
+            const isYou = Boolean(playerId && p.id === playerId)
             return (
               <div
                 key={p.id}

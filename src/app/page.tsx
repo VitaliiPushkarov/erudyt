@@ -57,10 +57,15 @@ export default function HomePage() {
       throw new Error(data?.error || `Join failed (${res.status})`)
     }
 
-    localStorage.setItem(LS.roomCode, data.room.code)
-    localStorage.setItem(LS.playerId, data.player.id)
-    localStorage.setItem(LS.playerName, data.player.name)
+    const room = data?.room
+    const player = data?.player
 
+    if (!room?.code) throw new Error('Join response missing room.code')
+    if (!player?.id) throw new Error('Join response missing player.id')
+
+    localStorage.setItem(LS.roomCode, room.code)
+    localStorage.setItem(LS.playerId, player.id)
+    localStorage.setItem(LS.playerName, player.name ?? '')
     router.push(`/room/${encodeURIComponent(data.room.code)}`)
   }
 
