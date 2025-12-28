@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 
 const LS = {
@@ -28,11 +28,18 @@ export default function RoomPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const [starting, setStarting] = useState(false)
+  const joinInFlightRef = useRef(false)
 
-  const playerId =
-    typeof window !== 'undefined' ? localStorage.getItem(LS.playerId) : null
-  const playerName =
-    typeof window !== 'undefined' ? localStorage.getItem(LS.playerName) : null
+  const [playerId, setPlayerId] = useState<string | null>(null)
+  const [playerName, setPlayerName] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Initialize from localStorage once on mount (reactive values for effects/render)
+    try {
+      setPlayerId(localStorage.getItem(LS.playerId))
+      setPlayerName(localStorage.getItem(LS.playerName))
+    } catch {}
+  }, [])
 
   async function fetchState() {
     setError('')
@@ -61,10 +68,38 @@ export default function RoomPage() {
   }, [roomCode])
 
   useEffect(() => {
-    if (!room || playerId) return
-    if (!roomCode || !playerName) return
+    if (!room) return
 
-    // якщо є кімната, але нема playerId — пробуємо знову join
+    // If we already have a playerId, do not join again (prevents creator duplication)
+    if (playerId) return
+
+    // Double-check localStorage inside the effect (in case state lags behind)
+    const lsPlayerId =
+      typeof window !== 'undefined' ? localStorage.getItem(LS.playerId) : null
+    if (lsPlayerId) {
+      setPlayerId(lsPlayerId)
+      return
+    }
+
+    if (!roomCode || !playerName) return
+    if (joinInFlightRef.current) return
+    joinInFlightRef.current = true
+
+    // If room already has someone with the same name, assume it's us (avoid duplicate join by name).
+    // This is a best-effort guard for MVP until we have proper reconnect/auth.
+    const nameTrim = playerName.trim()
+    const maybeMe = room.players?.find(
+      (p) => (p?.name || '').trim() === nameTrim
+    )
+    if (maybeMe?.id) {
+      try {
+        localStorage.setItem(LS.playerId, maybeMe.id)
+      } catch {}
+      setPlayerId(maybeMe.id)
+      joinInFlightRef.current = false
+      return
+    }
+
     fetch('/api/room/join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -72,11 +107,19 @@ export default function RoomPage() {
     })
       .then((r) => r.json())
       .then((data) => {
-        if (data?.ok && data?.player?.id) {
-          localStorage.setItem(LS.playerId, data.player.id)
+        const id = data?.playerId ?? data?.player?.id
+        if (data?.ok && id) {
+          try {
+            localStorage.setItem(LS.playerId, id)
+            localStorage.setItem(LS.roomCode, roomCode)
+          } catch {}
+          setPlayerId(id)
         }
       })
       .catch(() => {})
+      .finally(() => {
+        joinInFlightRef.current = false
+      })
   }, [room, roomCode, playerId, playerName])
 
   async function copyCode() {

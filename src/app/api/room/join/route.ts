@@ -12,6 +12,7 @@ const BodySchema = z.object({
 export async function POST(req: Request) {
   try {
     const { code, name } = BodySchema.parse(await req.json())
+    const trimmedName = name.trim()
 
     const room = await prisma.room.findUnique({
       where: { code },
@@ -24,18 +25,30 @@ export async function POST(req: Request) {
       )
     }
 
-    const player = await prisma.player.create({
-      data: {
+    // If a player with the same name already exists in this room, reuse it.
+    // This prevents accidental duplicates (e.g., refresh/auto-join/double-tap) in MVP mode.
+    const existingPlayer = await prisma.player.findFirst({
+      where: {
         roomId: room.id,
-        name: name.trim(),
+        name: trimmedName,
       },
     })
+
+    const player =
+      existingPlayer ??
+      (await prisma.player.create({
+        data: {
+          roomId: room.id,
+          name: trimmedName,
+        },
+      }))
 
     return NextResponse.json({
       ok: true,
       room,
       player,
       playerId: player.id,
+      reused: Boolean(existingPlayer),
     })
   } catch (e: any) {
     return NextResponse.json(

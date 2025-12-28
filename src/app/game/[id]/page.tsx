@@ -75,7 +75,8 @@ export default function GamePage() {
     const ably = getAblyClient()
     const channel = ably.channels.get(`game:${gameId}`)
 
-    const handler = () => {
+    const handler = (msg: any) => {
+      console.log('[Ably] state_updated', msg?.data)
       fetchGame()
     }
 

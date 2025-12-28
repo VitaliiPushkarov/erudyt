@@ -31,7 +31,6 @@ export default function HomePage() {
     // якщо там старий формат ERU-XXXX — прибираємо, щоб не ламало UX
     if (/^\d{6}$/.test(r)) {
       setSavedRoom(r)
-      if (!code) setCode(r)
     } else if (r) {
       localStorage.removeItem(LS.roomCode)
     }
@@ -72,11 +71,16 @@ export default function HomePage() {
   async function onCreate() {
     setLoading(true)
     setError('')
+    setCode('')
     try {
       const playerName = name.trim()
       if (!playerName) throw new Error('Вкажи імʼя')
 
-      const res = await fetch('/api/room/create', { method: 'POST' })
+      const res = await fetch('/api/room/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: playerName }),
+      })
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || `Create failed (${res.status})`)
@@ -180,26 +184,6 @@ export default function HomePage() {
           />
         </label>
 
-        <label style={{ display: 'grid', gap: 6 }}>
-          <span style={{ fontSize: 13, color: '#666' }}>Кімната (6 цифр)</span>
-          <input
-            value={code}
-            onChange={(e) => setCode(normalizeRoomCode(e.target.value))}
-            placeholder="Напр: 123456"
-            style={{
-              padding: 14,
-              borderRadius: 12,
-              border: '1px solid #ddd',
-              fontSize: 18,
-              letterSpacing: 2,
-            }}
-            inputMode="numeric"
-            pattern="\d{6}"
-            maxLength={6}
-            autoComplete="one-time-code"
-          />
-        </label>
-
         {error ? (
           <div style={{ color: '#b00020', fontSize: 14, marginTop: 2 }}>
             {error}
@@ -225,27 +209,64 @@ export default function HomePage() {
             Створити кімнату
           </button>
 
-          <button
-            onClick={onJoin}
-            disabled={loading || !canJoin}
+          <div
             style={{
-              width: '100%',
-              padding: 14,
-              borderRadius: 14,
-              border: '1px solid #ddd',
-              background: '#fff',
-              color: '#111',
-              fontSize: 16,
-              fontWeight: 800,
-              opacity: loading || !canJoin ? 0.6 : 1,
+              marginTop: 6,
+              paddingTop: 14,
+              borderTop: '1px solid #eee',
+              display: 'grid',
+              gap: 10,
             }}
           >
-            Приєднатись
-          </button>
+            <div style={{ fontSize: 13, color: '#666', fontWeight: 700 }}>
+              Приєднатись до кімнати
+            </div>
+
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: 13, color: '#666' }}>
+                Код кімнати (6 цифр)
+              </span>
+              <input
+                value={code}
+                onChange={(e) => setCode(normalizeRoomCode(e.target.value))}
+                placeholder="Напр: 123456"
+                style={{
+                  padding: 14,
+                  borderRadius: 12,
+                  border: '1px solid #ddd',
+                  fontSize: 18,
+                  letterSpacing: 2,
+                }}
+                inputMode="numeric"
+                pattern="\\d{6}"
+                maxLength={6}
+                autoComplete="one-time-code"
+              />
+            </label>
+
+            <button
+              onClick={onJoin}
+              disabled={loading || !canJoin}
+              style={{
+                width: '100%',
+                padding: 14,
+                borderRadius: 14,
+                border: '1px solid #ddd',
+                background: '#fff',
+                color: '#111',
+                fontSize: 16,
+                fontWeight: 800,
+                opacity: loading || !canJoin ? 0.6 : 1,
+              }}
+            >
+              Приєднатись
+            </button>
+          </div>
         </div>
 
         <div style={{ marginTop: 10, fontSize: 13, color: '#777' }}>
-          Порада: на двох телефонах введіть один і той самий 6‑значний код.
+          Порада: створіть кімнату на одному пристрої, скопіюйте 6‑значний код у
+          кімнаті та введіть його на іншому.
         </div>
       </section>
     </main>

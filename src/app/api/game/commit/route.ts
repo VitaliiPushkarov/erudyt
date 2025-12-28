@@ -19,15 +19,18 @@ export async function POST(req: Request) {
     select: { id: true, state: true },
   })
 
+  let published = false
   const ablyKey = process.env.ABLY_API_KEY
   if (ablyKey) {
     const ably = new Ably.Rest(ablyKey)
     const channel = ably.channels.get(`game:${id}`)
     await channel.publish('state_updated', { id, ts: Date.now() })
+    published = true
   }
 
   return NextResponse.json({
     ok: true,
+    published,
     game: { id: updated.id, state: updated.state },
   })
 }

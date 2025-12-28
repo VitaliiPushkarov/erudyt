@@ -16,17 +16,12 @@ function emptyBoard() {
   )
 }
 
-// MVP bag: UA + EN uppercase, simplified distribution
 function makeBag() {
   const ua = 'АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ'
   const en = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
   const letters = (ua + en).split('')
   const bag: string[] = []
-  for (const ch of letters) {
-    // light distribution: 2 of each
-    bag.push(ch, ch)
-  }
-  // shuffle
+  for (const ch of letters) bag.push(ch, ch)
   for (let i = bag.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
     ;[bag[i], bag[j]] = [bag[j], bag[i]]
@@ -51,17 +46,30 @@ export async function POST(req: Request) {
     where: { code: roomCode },
     include: { players: { orderBy: { createdAt: 'asc' } } },
   })
-  if (!room)
+  if (!room) {
     return NextResponse.json(
       { ok: false, error: 'Room not found' },
       { status: 404 }
     )
-  if (room.players.length < 2)
+  }
+  if (room.players.length < 2) {
     return NextResponse.json(
       { ok: false, error: 'Need 2 players' },
       { status: 400 }
     )
+  }
 
+  // ✅ 1) Якщо в кімнаті вже є активна гра — повертаємо її
+  const existing = await prisma.game.findFirst({
+    where: { roomId: room.id, status: 'IN_PROGRESS' },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  })
+  if (existing) {
+    return NextResponse.json({ ok: true, gameId: existing.id, reused: true })
+  }
+
+  // ✅ 2) Якщо активної гри нема — створюємо
   const bag = makeBag()
 
   const players = room.players.map((p) => ({
@@ -71,9 +79,7 @@ export async function POST(req: Request) {
   }))
 
   const racks: Record<string, string[]> = {}
-  for (const p of room.players) {
-    racks[p.id] = draw(bag, 7)
-  }
+  for (const p of room.players) racks[p.id] = draw(bag, 7)
 
   const state = {
     v: 1,
@@ -82,10 +88,7 @@ export async function POST(req: Request) {
     players,
     racks,
     turnPlayerId: room.players[0].id,
-    lastMove: null as null | {
-      by: string
-      placed: { r: number; c: number; ch: string }[]
-    },
+    lastMove: null,
   }
 
   const game = await prisma.game.create({
@@ -94,7 +97,8 @@ export async function POST(req: Request) {
       status: 'IN_PROGRESS',
       state,
     },
+    select: { id: true },
   })
 
-  return NextResponse.json({ ok: true, gameId: game.id })
+  return NextResponse.json({ ok: true, gameId: game.id, reused: false })
 }
