@@ -1,3 +1,4 @@
+import Ably from 'ably'
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
@@ -16,6 +17,15 @@ export async function POST(req: Request) {
     where: { id },
     data: { state },
   })
+  const ablyKey = process.env.ABLY_API_KEY
+  if (ablyKey) {
+    const ably = new Ably.Rest(ablyKey)
+    const channel = ably.channels.get(`game:${id}`)
+    await channel.publish('state_updated', {
+      id,
+      ts: Date.now(),
+    })
+  }
 
   return NextResponse.json({
     ok: true,

@@ -1,5 +1,5 @@
 'use client'
-
+import { getAblyClient } from '@/app/lib/ably'
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 
@@ -65,7 +65,27 @@ export default function GamePage() {
       setError(e?.message ?? String(e))
     }
   }
+  useEffect(() => {
+    if (!gameId) return
 
+    // 1) початкове завантаження
+    fetchGame()
+
+    // 2) realtime subscribe
+    const ably = getAblyClient()
+    const channel = ably.channels.get(`game:${gameId}`)
+
+    const handler = () => {
+      fetchGame()
+    }
+
+    channel.subscribe('state_updated', handler)
+
+    return () => {
+      channel.unsubscribe('state_updated', handler)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId])
   useEffect(() => {
     if (!gameId) return
     setLoading(true)
