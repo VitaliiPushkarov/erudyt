@@ -5,7 +5,7 @@ import { prisma } from '@/app/lib/prisma'
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
-  const code = (searchParams.get('code') || '').toUpperCase()
+  const code = (searchParams.get('code') || '').trim()
   if (!code)
     return NextResponse.json(
       { ok: false, error: 'Missing code' },

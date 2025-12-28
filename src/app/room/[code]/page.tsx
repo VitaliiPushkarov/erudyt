@@ -9,23 +9,18 @@ const LS = {
   playerName: 'erudyt_playerName',
 }
 
-type Player = {
-  id: string
-  name: string
-  createdAt: string
-}
+type Player = { id: string; name: string; createdAt: string }
+type Room = { id: string; code: string; players: Player[] }
 
-type Room = {
-  id: string
-  code: string
-  players: Player[]
+function normalizeRoomCode(input: string) {
+  return input.replace(/\D/g, '').slice(0, 6)
 }
 
 export default function RoomPage() {
   const router = useRouter()
   const params = useParams<{ code: string }>()
   const roomCode = useMemo(
-    () => (params?.code || '').toString().toUpperCase(),
+    () => normalizeRoomCode((params?.code || '').toString()),
     [params]
   )
 
@@ -56,9 +51,7 @@ export default function RoomPage() {
   }
 
   useEffect(() => {
-    // sync localStorage room code
     if (roomCode) localStorage.setItem(LS.roomCode, roomCode)
-
     setLoading(true)
     fetchState().finally(() => setLoading(false))
 
@@ -94,6 +87,38 @@ export default function RoomPage() {
     }
   }
 
+  if (!/^\d{6}$/.test(roomCode)) {
+    return (
+      <main
+        style={{
+          minHeight: '100dvh',
+          padding: 16,
+          maxWidth: 520,
+          margin: '0 auto',
+        }}
+      >
+        <div style={{ fontSize: 20, fontWeight: 900 }}>
+          Невірний код кімнати
+        </div>
+        <div style={{ marginTop: 8, color: '#666' }}>Код має бути 6 цифр.</div>
+        <button
+          onClick={() => router.push('/')}
+          style={{
+            marginTop: 14,
+            width: '100%',
+            padding: 14,
+            borderRadius: 14,
+            border: '1px solid #ddd',
+            background: '#fff',
+            fontWeight: 800,
+          }}
+        >
+          На головну
+        </button>
+      </main>
+    )
+  }
+
   const players = room?.players ?? []
   const canStart = players.length >= 2
 
@@ -116,7 +141,7 @@ export default function RoomPage() {
       >
         <div>
           <div style={{ fontSize: 13, color: '#666' }}>Кімната</div>
-          <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: 0.5 }}>
+          <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: 2 }}>
             {roomCode}
           </div>
           <div style={{ marginTop: 6, fontSize: 13, color: '#666' }}>
@@ -136,7 +161,7 @@ export default function RoomPage() {
             whiteSpace: 'nowrap',
           }}
         >
-          Copy code
+          Copy
         </button>
       </header>
 
@@ -177,15 +202,11 @@ export default function RoomPage() {
               </div>
             )
           })}
-
-          {!loading && players.length === 0 ? (
-            <div style={{ color: '#777', fontSize: 14 }}>Поки нікого нема…</div>
-          ) : null}
         </div>
 
         <div style={{ marginTop: 10, fontSize: 13, color: '#777' }}>
-          Підключіть другого гравця: відкрийте сайт на іншому телефоні та
-          введіть код кімнати.
+          Підключіть другого гравця: введіть цей 6‑значний код на іншому
+          телефоні.
         </div>
 
         {error ? (
@@ -195,7 +216,6 @@ export default function RoomPage() {
         ) : null}
       </section>
 
-      {/* Sticky bottom action (mobile-first) */}
       <div
         style={{
           position: 'sticky',
@@ -228,44 +248,6 @@ export default function RoomPage() {
               : 'Start game'
             : 'Очікуємо 2 гравців'}
         </button>
-
-        <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
-          <button
-            onClick={() => router.push('/')}
-            style={{
-              width: '100%',
-              padding: 12,
-              borderRadius: 14,
-              border: '1px solid #ddd',
-              background: '#fff',
-              fontSize: 14,
-              fontWeight: 800,
-            }}
-          >
-            Вийти на головну
-          </button>
-
-          <button
-            onClick={() => {
-              localStorage.removeItem(LS.playerId)
-              localStorage.removeItem(LS.playerName)
-              // roomCode залишимо, щоб зручно було підключитись знову
-              router.push('/')
-            }}
-            style={{
-              width: '100%',
-              padding: 12,
-              borderRadius: 14,
-              border: '1px solid #eee',
-              background: '#fff',
-              fontSize: 14,
-              fontWeight: 700,
-              color: '#444',
-            }}
-          >
-            Змінити імʼя
-          </button>
-        </div>
       </div>
     </main>
   )

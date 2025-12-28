@@ -9,8 +9,8 @@ const LS = {
   playerName: 'erudyt_playerName',
 }
 
-function safeUpper(s: string) {
-  return s.trim().toUpperCase()
+function normalizeRoomCode(input: string) {
+  return input.replace(/\D/g, '').slice(0, 6)
 }
 
 export default function HomePage() {
@@ -27,15 +27,22 @@ export default function HomePage() {
   useEffect(() => {
     const r = localStorage.getItem(LS.roomCode) || ''
     const n = localStorage.getItem(LS.playerName) || ''
-    setSavedRoom(r)
+
+    // якщо там старий формат ERU-XXXX — прибираємо, щоб не ламало UX
+    if (/^\d{6}$/.test(r)) {
+      setSavedRoom(r)
+      if (!code) setCode(r)
+    } else if (r) {
+      localStorage.removeItem(LS.roomCode)
+    }
+
     setSavedName(n)
     if (!name && n) setName(n)
-    if (!code && r) setCode(r)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const canJoin = useMemo(
-    () => name.trim().length > 0 && code.trim().length >= 3,
+    () => name.trim().length > 0 && /^\d{6}$/.test(code.trim()),
     [name, code]
   )
 
@@ -70,7 +77,7 @@ export default function HomePage() {
         throw new Error(data?.error || `Create failed (${res.status})`)
       }
 
-      const roomCode = data.room.code as string
+      const roomCode = data.room.code as string // 6 digits
       await joinRoom(roomCode, playerName)
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -83,7 +90,7 @@ export default function HomePage() {
     setLoading(true)
     setError('')
     try {
-      await joinRoom(safeUpper(code), name.trim())
+      await joinRoom(code.trim(), name.trim())
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -110,7 +117,7 @@ export default function HomePage() {
           Ерудит
         </div>
         <div style={{ marginTop: 6, color: '#555', fontSize: 14 }}>
-          Mobile-first · локальні кімнати · ваш словник
+          Mobile-first · кімнати · ваш словник
         </div>
       </div>
 
@@ -169,19 +176,22 @@ export default function HomePage() {
         </label>
 
         <label style={{ display: 'grid', gap: 6 }}>
-          <span style={{ fontSize: 13, color: '#666' }}>Код кімнати</span>
+          <span style={{ fontSize: 13, color: '#666' }}>Кімната (6 цифр)</span>
           <input
             value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="Напр: ERU-ABCD"
+            onChange={(e) => setCode(normalizeRoomCode(e.target.value))}
+            placeholder="Напр: 123456"
             style={{
               padding: 14,
               borderRadius: 12,
               border: '1px solid #ddd',
-              fontSize: 16,
-              textTransform: 'uppercase',
+              fontSize: 18,
+              letterSpacing: 2,
             }}
-            autoCapitalize="characters"
+            inputMode="numeric"
+            pattern="\d{6}"
+            maxLength={6}
+            autoComplete="one-time-code"
           />
         </label>
 
@@ -230,8 +240,7 @@ export default function HomePage() {
         </div>
 
         <div style={{ marginTop: 10, fontSize: 13, color: '#777' }}>
-          Порада: відкрийте цей сайт на двох телефонах і введіть один код
-          кімнати.
+          Порада: на двох телефонах введіть один і той самий 6‑значний код.
         </div>
       </section>
     </main>

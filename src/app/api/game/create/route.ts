@@ -5,14 +5,14 @@ import { z } from 'zod'
 import { prisma } from '@/app/lib/prisma'
 
 const BodySchema = z.object({
-  roomCode: z.string().min(3),
+  roomCode: z.string().regex(/^\d{6}$/, 'Room code must be 6 digits'),
 })
 
 export async function POST(req: Request) {
   const { roomCode } = BodySchema.parse(await req.json())
 
   const room = await prisma.room.findUnique({
-    where: { code: roomCode.toUpperCase() },
+    where: { code: roomCode },
     include: { players: true },
   })
   if (!room)
