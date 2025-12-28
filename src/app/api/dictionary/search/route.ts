@@ -1,3 +1,5 @@
+export const runtime = 'nodejs'
+
 import { NextResponse } from 'next/server'
 import { prisma } from '@/app/lib/prisma'
 import { normalizeWord } from '@/app/lib/dict/normalize'

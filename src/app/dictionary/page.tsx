@@ -34,8 +34,10 @@ export default function DictionaryPage() {
       const res = await fetch(
         `/api/dictionary/search?q=${encodeURIComponent(query)}`
       )
-      const data = await res.json()
-      if (!data.ok) throw new Error(data.error || 'Search failed')
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `Request failed (${res.status})`)
+      }
       setItems(data.items)
     } catch (e: any) {
       setMsg(e?.message ?? String(e))
@@ -58,8 +60,10 @@ export default function DictionaryPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ word, tags, note: note || undefined }),
       })
-      const data = await res.json()
-      if (!data.ok) throw new Error(data.error || 'Add failed')
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `Request failed (${res.status})`)
+      }
       setWord('')
       setNote('')
       await fetchList()
