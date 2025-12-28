@@ -1,9 +1,9 @@
-import Ably from 'ably'
 export const runtime = 'nodejs'
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/app/lib/prisma'
+import Ably from 'ably'
 
 const BodySchema = z.object({
   id: z.string().min(1),
@@ -16,15 +16,14 @@ export async function POST(req: Request) {
   const updated = await prisma.game.update({
     where: { id },
     data: { state },
+    select: { id: true, state: true },
   })
+
   const ablyKey = process.env.ABLY_API_KEY
   if (ablyKey) {
     const ably = new Ably.Rest(ablyKey)
     const channel = ably.channels.get(`game:${id}`)
-    await channel.publish('state_updated', {
-      id,
-      ts: Date.now(),
-    })
+    await channel.publish('state_updated', { id, ts: Date.now() })
   }
 
   return NextResponse.json({

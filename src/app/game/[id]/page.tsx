@@ -71,7 +71,7 @@ export default function GamePage() {
     // 1) початкове завантаження
     fetchGame()
 
-    // 2) realtime subscribe
+    // 2) realtime subscribe + fallback polling
     const ably = getAblyClient()
     const channel = ably.channels.get(`game:${gameId}`)
 
@@ -81,17 +81,12 @@ export default function GamePage() {
 
     channel.subscribe('state_updated', handler)
 
+    const interval = setInterval(fetchGame, 15000)
+
     return () => {
       channel.unsubscribe('state_updated', handler)
+      clearInterval(interval)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId])
-  useEffect(() => {
-    if (!gameId) return
-    setLoading(true)
-    fetchGame().finally(() => setLoading(false))
-    const t = setInterval(fetchGame, 2500)
-    return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId])
 
