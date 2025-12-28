@@ -49,8 +49,13 @@ export default function GamePage() {
     setError('')
     try {
       const res = await fetch(
-        `/api/game/state?id=${encodeURIComponent(gameId)}`,
-        { cache: 'no-store' }
+        `/api/game/state?id=${encodeURIComponent(gameId)}&t=${Date.now()}`,
+        {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache',
+          },
+        }
       )
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.ok)
@@ -174,7 +179,7 @@ export default function GamePage() {
       if (!res.ok || !data?.ok)
         throw new Error(data?.error || `Commit failed (${res.status})`)
 
-      setState(nextState)
+      await fetchGame()
       clearPending()
     } catch (e: any) {
       setError(e?.message ?? String(e))

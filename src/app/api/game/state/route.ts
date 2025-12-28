@@ -19,8 +19,15 @@ export async function GET(req: Request) {
       { status: 404 }
     )
 
-  return NextResponse.json({
-    ok: true,
-    game: { id: game.id, status: game.status, state: game.state },
-  })
+  return NextResponse.json(
+    { ok: true, game: { id: game.id, status: game.status, state: game.state } },
+    {
+      headers: {
+        'Cache-Control':
+          'no-store, no-cache, must-revalidate, proxy-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+    }
+  )
 }
