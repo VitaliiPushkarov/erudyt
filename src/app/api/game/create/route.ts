@@ -3,6 +3,7 @@ export const runtime = 'nodejs'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/app/lib/prisma'
+import { buildBagUA } from '@/app/lib/game/ua'
 
 const BodySchema = z.object({
   roomCode: z.string().regex(/^\d{6}$/, 'Room code must be 6 digits'),
@@ -14,19 +15,6 @@ function emptyBoard() {
   return Array.from({ length: BOARD_SIZE }, () =>
     Array.from({ length: BOARD_SIZE }, () => null as string | null)
   )
-}
-
-function makeBag() {
-  const ua = 'АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ'
-  const en = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-  const letters = (ua + en).split('')
-  const bag: string[] = []
-  for (const ch of letters) bag.push(ch, ch)
-  for (let i = bag.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[bag[i], bag[j]] = [bag[j], bag[i]]
-  }
-  return bag
 }
 
 function draw(bag: string[], n: number) {
@@ -70,7 +58,7 @@ export async function POST(req: Request) {
   }
 
   // ✅ 2) Якщо активної гри нема — створюємо
-  const bag = makeBag()
+  const bag = buildBagUA()
 
   const players = room.players.map((p) => ({
     id: p.id,
@@ -89,13 +77,19 @@ export async function POST(req: Request) {
     racks,
     turnPlayerId: room.players[0].id,
     lastMove: null,
+    rules: {
+      allowMultiDirectionPlacements: true,
+    },
   }
+
+  const first = room.players[0].id
 
   const game = await prisma.game.create({
     data: {
       roomId: room.id,
       status: 'IN_PROGRESS',
-      state,
+      turnPlayerId: first,
+      state: { ...state, turnPlayerId: first },
     },
     select: { id: true },
   })

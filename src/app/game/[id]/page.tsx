@@ -2,6 +2,8 @@
 import { getAblyClient } from '@/app/lib/ably'
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
+import { UA_POINTS } from '@/app/lib/game/ua'
+import { BOARD_MULTIPLIERS } from '@/app/lib/game/boardMultipliers'
 
 const LS = {
   playerId: 'erudyt_playerId',
@@ -37,15 +39,14 @@ export default function GamePage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>('')
 
-  const playerId =
-    typeof window !== 'undefined' ? localStorage.getItem(LS.playerId) : null
-  const playerName =
-    typeof window !== 'undefined' ? localStorage.getItem(LS.playerName) : null
+  const [playerId, setPlayerId] = useState<string | null>(null)
+  const [playerName, setPlayerName] = useState<string | null>(null)
 
   const meId = playerId || ''
   const myRack = state?.racks?.[meId] ?? []
 
   async function fetchGame() {
+    setLoading(true)
     setError('')
     try {
       const res = await fetch(
@@ -63,8 +64,16 @@ export default function GamePage() {
       setState(data.game.state)
     } catch (e: any) {
       setError(e?.message ?? String(e))
+    } finally {
+      setLoading(false)
     }
   }
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    setPlayerId(localStorage.getItem(LS.playerId))
+    setPlayerName(localStorage.getItem(LS.playerName))
+  }, [])
+
   useEffect(() => {
     if (!gameId) return
 
@@ -146,56 +155,23 @@ export default function GamePage() {
     if (!state) return
     if (!isMyTurn) return
     if (pending.length === 0) return
+    if (!meId) return
 
     setSaving(true)
     setError('')
     try {
-      // apply pending to board
-      const nextBoard = state.board.map((row) => row.slice())
-      for (const p of pending) nextBoard[p.r][p.c] = p.ch
+      const placements = pending.map(({ r, c, ch }) => ({ r, c, ch }))
 
-      // remove used rack letters
-      const nextRack = myRack.slice()
-      for (const p of pending) nextRack[p.fromRackIndex] = '' // mark empty
-
-      // draw replacements
-      const nextBag = state.bag.slice()
-      const refill: string[] = []
-      for (let i = 0; i < nextRack.length; i++) {
-        if (!nextRack[i]) {
-          const x = nextBag.pop()
-          refill.push(x || '')
-          nextRack[i] = x || ''
-        }
-      }
-
-      // determine next turn player (simple round-robin)
-      const ids = state.players.map((p) => p.id)
-      const idx = ids.indexOf(state.turnPlayerId)
-      const nextTurn = ids[(idx + 1) % ids.length] || state.turnPlayerId
-
-      const nextState: GameState = {
-        ...state,
-        board: nextBoard,
-        bag: nextBag,
-        racks: { ...state.racks, [meId]: nextRack },
-        turnPlayerId: nextTurn,
-        lastMove: {
-          by: meId,
-          placed: pending.map(({ r, c, ch }) => ({ r, c, ch })),
-        },
-      }
-
-      const res = await fetch('/api/game/commit', {
+      const res = await fetch('/api/game/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: gameId, state: nextState }),
+        body: JSON.stringify({ gameId, playerId: meId, placements }),
       })
       const data = await res.json().catch(() => null)
       if (!res.ok || !data?.ok)
-        throw new Error(data?.error || `Commit failed (${res.status})`)
+        throw new Error(data?.error || `Move failed (${res.status})`)
 
-      await fetchGame()
+      setState(data.game.state)
       clearPending()
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -226,6 +202,7 @@ export default function GamePage() {
   }
 
   const size = state.board.length
+  const CENTER = 7
 
   return (
     <main
@@ -276,7 +253,21 @@ export default function GamePage() {
           </div>
         ) : null}
       </header>
-
+      <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {state.players.map((p) => (
+          <div
+            key={p.id}
+            style={{
+              border: '1px solid #eee',
+              borderRadius: 999,
+              padding: '6px 10px',
+              fontSize: 13,
+            }}
+          >
+            <b>{p.name}</b>: {p.score}
+          </div>
+        ))}
+      </div>
       {/* BOARD (mobile-first: scrollable) */}
       <div
         style={{
@@ -300,6 +291,35 @@ export default function GamePage() {
                   const pend = cellHasPending(r, c)
                   const ch = pend?.ch ?? cell
                   const isSelectedCell = Boolean(pend)
+                  const isCenter = r === CENTER && c === CENTER
+                  const showCenterMark = isCenter && !ch
+
+                  const mult = BOARD_MULTIPLIERS[r][c]
+
+                  let bg = '#ffffff'
+                  let label: string | null = null
+
+                  if (!ch && mult) {
+                    if ('word' in mult && mult.word === 3) {
+                      bg = '#fecaca' // TW soft red
+                      label = '3×С'
+                    } else if ('word' in mult && mult.word === 2) {
+                      bg = '#fbcfe8' // DW soft pink
+                      label = '2×С'
+                    } else if ('letter' in mult && mult.letter === 3) {
+                      bg = '#bfdbfe' // TL soft blue
+                      label = '3×Б'
+                    } else if ('letter' in mult && mult.letter === 2) {
+                      bg = '#dbeafe' // DL very light blue
+                      label = '2×Б'
+                    }
+                  }
+
+                  if (showCenterMark) {
+                    bg = '#fde68a'
+                    label = '★'
+                  }
+
                   return (
                     <button
                       key={`${r}-${c}`}
@@ -311,9 +331,9 @@ export default function GamePage() {
                         border: '1px solid #ddd',
                         background: ch
                           ? isSelectedCell
-                            ? '#111'
-                            : '#f7f7f7'
-                          : '#fff',
+                            ? '#1f2937'
+                            : '#fffbeb'
+                          : bg,
                         color: ch ? (isSelectedCell ? '#fff' : '#111') : '#999',
                         fontWeight: 900,
                         fontSize: 14,
@@ -322,7 +342,23 @@ export default function GamePage() {
                       }}
                       aria-label={`cell ${r + 1}-${c + 1}`}
                     >
-                      {ch ?? ''}
+                      {ch ? (
+                        ch
+                      ) : label ? (
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            color: '#374151',
+                            opacity: label === '★' ? 0.45 : 0.7,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {label}
+                        </span>
+                      ) : (
+                        ''
+                      )}
                     </button>
                   )
                 })
@@ -368,7 +404,16 @@ export default function GamePage() {
                   cursor: ch && !used ? 'pointer' : 'default',
                 }}
               >
-                {ch || ''}
+                {ch ? (
+                  <div style={{ display: 'grid', lineHeight: 1 }}>
+                    <div style={{ fontSize: 18, fontWeight: 900 }}>{ch}</div>
+                    <div
+                      style={{ fontSize: 10, color: '#666', fontWeight: 800 }}
+                    >
+                      {UA_POINTS[ch] ?? 0}
+                    </div>
+                  </div>
+                ) : null}
               </button>
             )
           })}
