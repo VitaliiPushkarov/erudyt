@@ -26,6 +26,15 @@ type GameState = {
 type Pending = { r: number; c: number; ch: string; fromRackIndex: number }
 
 export default function GamePage() {
+  const [showYourTurn, setShowYourTurn] = useState(false)
+
+  type PreviewWord = { word: string; score: number }
+  type BonusCell = { r: number; c: number; label: string }
+  type MovePreview = { total: number; words: PreviewWord[]; bonus: BonusCell[] }
+
+  const [confirm, setConfirm] = useState<MovePreview | null>(null)
+  const [flashCells, setFlashCells] = useState<Set<string>>(new Set())
+  const [errorModal, setErrorModal] = useState<string | null>(null)
   const params = useParams<{ id: string }>()
   const gameId = useMemo(() => (params?.id || '').toString(), [params])
 
@@ -38,6 +47,7 @@ export default function GamePage() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>('')
+  const [previewing, setPreviewing] = useState(false)
 
   const [playerId, setPlayerId] = useState<string | null>(null)
   const [playerName, setPlayerName] = useState<string | null>(null)
@@ -106,7 +116,20 @@ export default function GamePage() {
   function rackLetter(i: number) {
     return myRack[i] ?? null
   }
+  useEffect(() => {
+    if (!state || !meId) return
 
+    if (state.turnPlayerId === meId) {
+      setShowYourTurn(true)
+      const t = setTimeout(() => setShowYourTurn(false), 2500)
+      return () => clearTimeout(t)
+    }
+  }, [state?.turnPlayerId, meId])
+
+  useEffect(() => {
+    if (errorModal) setErrorModal(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending.length])
   function cellHasPending(r: number, c: number) {
     return pending.find((p) => p.r === r && p.c === c) || null
   }
@@ -151,6 +174,159 @@ export default function GamePage() {
     setSelectedRackIndex(null)
   }
 
+  function collectWordLocal(
+    board: (string | null)[][],
+    r0: number,
+    c0: number,
+    dr: 0 | 1,
+    dc: 0 | 1
+  ) {
+    // move to start
+    let r = r0
+    let c = c0
+    while (board[r - dr]?.[c - dc]) {
+      r -= dr
+      c -= dc
+    }
+
+    const start = { r, c }
+    const cells: { r: number; c: number; ch: string }[] = []
+    let word = ''
+
+    while (board[r]?.[c]) {
+      const ch = board[r][c] as string
+      word += ch
+      cells.push({ r, c, ch })
+      r += dr
+      c += dc
+    }
+
+    return { word, cells, start, dr, dc }
+  }
+
+  function buildMovePreview(): MovePreview {
+    if (!state) return { total: 0, words: [], bonus: [] }
+    if (!meId) return { total: 0, words: [], bonus: [] }
+    if (pending.length === 0) return { total: 0, words: [], bonus: [] }
+
+    // nextBoard = board + pending
+    const nextBoard = state.board.map((row) => row.slice())
+    for (const p of pending) nextBoard[p.r][p.c] = p.ch
+
+    const placedSet = new Set(pending.map((p) => `${p.r},${p.c}`))
+
+    // Collect words (freestyle): for each placed tile, try horizontal + vertical, dedupe by span
+    const wordMap = new Map<
+      string,
+      {
+        word: string
+        cells: { r: number; c: number; ch: string }[]
+        start: { r: number; c: number }
+        dr: 0 | 1
+        dc: 0 | 1
+      }
+    >()
+
+    const addWord = (w: ReturnType<typeof collectWordLocal>) => {
+      if (!w.word || w.word.length <= 1) return
+      const key = `${w.start.r},${w.start.c}:${w.dr},${w.dc}`
+      if (!wordMap.has(key)) wordMap.set(key, w)
+    }
+
+    for (const p of pending) {
+      addWord(collectWordLocal(nextBoard, p.r, p.c, 0, 1)) // horiz
+      addWord(collectWordLocal(nextBoard, p.r, p.c, 1, 0)) // vert
+    }
+
+    const wordsRaw = Array.from(wordMap.values())
+
+    // Score per word using multipliers only for newly placed tiles
+    const words: PreviewWord[] = []
+    let total = 0
+
+    for (const w of wordsRaw) {
+      let wordScore = 0
+      let wordMul = 1
+
+      for (const cell of w.cells) {
+        const base = UA_POINTS[cell.ch] ?? 0
+        let letterScore = base
+
+        const isNew = placedSet.has(`${cell.r},${cell.c}`)
+        if (isNew) {
+          const m = BOARD_MULTIPLIERS[cell.r][cell.c]
+          if (m && 'letter' in m) letterScore *= m.letter
+          if (m && 'word' in m) wordMul *= m.word
+        }
+
+        wordScore += letterScore
+      }
+
+      const scored = wordScore * wordMul
+      total += scored
+      words.push({ word: w.word, score: scored })
+    }
+
+    // Bingo preview
+    if (pending.length === 7) total += 50
+
+    // Bonus cells used this move
+    const bonus: BonusCell[] = []
+    for (const p of pending) {
+      const m = BOARD_MULTIPLIERS[p.r][p.c]
+      if (!m) continue
+      if (m && 'word' in m) bonus.push({ r: p.r, c: p.c, label: `${m.word}×С` })
+      if (m && 'letter' in m)
+        bonus.push({ r: p.r, c: p.c, label: `${m.letter}×Б` })
+    }
+
+    words.sort((a, b) => b.score - a.score)
+
+    return { total, words, bonus }
+  }
+  useEffect(() => {
+    if (!state?.lastMove?.placed) return
+    const s = new Set(state.lastMove.placed.map((p) => `${p.r},${p.c}`))
+    setFlashCells(s)
+    const t = setTimeout(() => setFlashCells(new Set()), 1200)
+    return () => clearTimeout(t)
+  }, [state?.lastMove?.by, state?.lastMove?.placed])
+  async function openConfirm() {
+    if (!state) return
+    if (!isMyTurn) return
+    if (!meId) return
+    if (pending.length === 0) return
+
+    setPreviewing(true)
+    setError('')
+    try {
+      const placements = pending.map(({ r, c, ch }) => ({ r, c, ch }))
+
+      const res = await fetch('/api/game/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gameId,
+          playerId: meId,
+          placements,
+          previewOnly: true,
+        }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || 'Помилка перевірки ходу')
+      }
+
+      setConfirm(data.preview)
+    } catch (e: any) {
+      const msg = e?.message ?? String(e)
+      setError(msg)
+      setErrorModal(msg)
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
   async function commitTurn() {
     if (!state) return
     if (!isMyTurn) return
@@ -174,7 +350,9 @@ export default function GamePage() {
       setState(data.game.state)
       clearPending()
     } catch (e: any) {
-      setError(e?.message ?? String(e))
+      const msg = e?.message ?? String(e)
+      setError(msg)
+      setErrorModal(msg)
     } finally {
       setSaving(false)
     }
@@ -275,95 +453,116 @@ export default function GamePage() {
           borderRadius: 14,
           overflow: 'hidden',
           background: '#fff',
+          width: '100%',
         }}
       >
-        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          <div style={{ width: 15 * 34, padding: 8 }}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: `repeat(${size}, 32px)`,
-                gap: 2,
-              }}
-            >
-              {state.board.map((row, r) =>
-                row.map((cell, c) => {
-                  const pend = cellHasPending(r, c)
-                  const ch = pend?.ch ?? cell
-                  const isSelectedCell = Boolean(pend)
-                  const isCenter = r === CENTER && c === CENTER
-                  const showCenterMark = isCenter && !ch
+        <div
+          style={{
+            padding: 8,
+            // responsive cell size: fits board into viewport (no horizontal scroll)
+            // 56px is a safety padding budget (page padding + borders + gaps)
+            ['--cell' as any]: 'clamp(20px, calc((100vw - 56px) / 15), 32px)',
+            ['--gap' as any]: 'clamp(1px, calc(var(--cell) * 0.06), 2px)',
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${size}, var(--cell))`,
+              gap: 'var(--gap)',
+              justifyContent: 'center',
+            }}
+          >
+            {state.board.map((row, r) =>
+              row.map((cell, c) => {
+                const pend = cellHasPending(r, c)
+                const ch = pend?.ch ?? cell
+                const isSelectedCell = Boolean(pend)
+                const isCenter = r === CENTER && c === CENTER
+                const showCenterMark = isCenter && !ch
 
-                  const mult = BOARD_MULTIPLIERS[r][c]
+                const mult = BOARD_MULTIPLIERS[r][c]
 
-                  let bg = '#ffffff'
-                  let label: string | null = null
+                let bg = '#ffffff'
+                let label: string | null = null
 
-                  if (!ch && mult) {
-                    if ('word' in mult && mult.word === 3) {
-                      bg = '#fecaca' // TW soft red
-                      label = '3×С'
-                    } else if ('word' in mult && mult.word === 2) {
-                      bg = '#fbcfe8' // DW soft pink
-                      label = '2×С'
-                    } else if ('letter' in mult && mult.letter === 3) {
-                      bg = '#bfdbfe' // TL soft blue
-                      label = '3×Б'
-                    } else if ('letter' in mult && mult.letter === 2) {
-                      bg = '#dbeafe' // DL very light blue
-                      label = '2×Б'
-                    }
+                if (!ch && mult) {
+                  if ('word' in mult && mult.word === 3) {
+                    bg = '#fecaca' // TW soft red
+                    label = '3×С'
+                  } else if ('word' in mult && mult.word === 2) {
+                    bg = '#fbcfe8' // DW soft pink
+                    label = '2×С'
+                  } else if ('letter' in mult && mult.letter === 3) {
+                    bg = '#bfdbfe' // TL soft blue
+                    label = '3×Б'
+                  } else if ('letter' in mult && mult.letter === 2) {
+                    bg = '#dbeafe' // DL very light blue
+                    label = '2×Б'
                   }
+                }
 
-                  if (showCenterMark) {
-                    bg = '#fde68a'
-                    label = '★'
-                  }
+                if (showCenterMark) {
+                  bg = '#fde68a'
+                  label = '★'
+                }
 
-                  return (
-                    <button
-                      key={`${r}-${c}`}
-                      onClick={() => onTapCell(r, c)}
-                      style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: 6,
-                        border: '1px solid #ddd',
-                        background: ch
-                          ? isSelectedCell
-                            ? '#1f2937'
-                            : '#fffbeb'
-                          : bg,
-                        color: ch ? (isSelectedCell ? '#fff' : '#111') : '#999',
-                        fontWeight: 900,
-                        fontSize: 14,
-                        padding: 0,
-                        cursor: 'pointer',
-                      }}
-                      aria-label={`cell ${r + 1}-${c + 1}`}
-                    >
-                      {ch ? (
-                        ch
-                      ) : label ? (
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 700,
-                            color: '#374151',
-                            opacity: label === '★' ? 0.45 : 0.7,
-                            lineHeight: 1,
-                          }}
-                        >
-                          {label}
-                        </span>
-                      ) : (
-                        ''
-                      )}
-                    </button>
-                  )
-                })
-              )}
-            </div>
+                const isPendingHere = Boolean(pend)
+                const isBonusHere = isPendingHere && Boolean(mult)
+                const isFlash = flashCells.has(`${r},${c}`)
+
+                return (
+                  <button
+                    key={`${r}-${c}`}
+                    onClick={() => onTapCell(r, c)}
+                    style={{
+                      width: 'var(--cell)',
+                      height: 'var(--cell)',
+                      borderRadius: 'calc(var(--cell) * 0.18)',
+                      border: '1px solid #ddd',
+                      background: ch
+                        ? isSelectedCell
+                          ? '#1f2937'
+                          : '#fffbeb'
+                        : bg,
+                      boxShadow: isBonusHere
+                        ? '0 0 0 2px rgba(17,24,39,0.28), 0 8px 16px rgba(17,24,39,0.12)'
+                        : isFlash
+                        ? '0 0 0 2px rgba(16,185,129,0.45), 0 10px 18px rgba(16,185,129,0.18)'
+                        : undefined,
+                      color: ch
+                        ? isSelectedCell
+                          ? '#fff'
+                          : '#111827'
+                        : '#6b7280',
+                      fontWeight: ch ? 900 : 700,
+                      fontSize: 'calc(var(--cell) * 0.45)',
+                      padding: 0,
+                      cursor: 'pointer',
+                    }}
+                    aria-label={`cell ${r + 1}-${c + 1}`}
+                  >
+                    {ch ? (
+                      ch
+                    ) : label ? (
+                      <span
+                        style={{
+                          fontSize: 'calc(var(--cell) * 0.28)',
+                          fontWeight: 700,
+                          color: '#374151',
+                          opacity: label === '★' ? 0.45 : 0.7,
+                          lineHeight: 1,
+                        }}
+                      >
+                        {label}
+                      </span>
+                    ) : (
+                      ''
+                    )}
+                  </button>
+                )
+              })
+            )}
           </div>
         </div>
       </div>
@@ -438,8 +637,8 @@ export default function GamePage() {
         }}
       >
         <button
-          onClick={commitTurn}
-          disabled={!isMyTurn || saving || pending.length === 0}
+          onClick={openConfirm}
+          disabled={!isMyTurn || saving || previewing || pending.length === 0}
           style={{
             width: '100%',
             padding: 16,
@@ -449,11 +648,16 @@ export default function GamePage() {
             color: '#fff',
             fontSize: 16,
             fontWeight: 900,
-            opacity: !isMyTurn || saving || pending.length === 0 ? 0.55 : 1,
+            opacity:
+              !isMyTurn || saving || previewing || pending.length === 0
+                ? 0.55
+                : 1,
           }}
         >
           {pending.length === 0
             ? 'Зроби хід'
+            : previewing
+            ? 'Перевіряю…'
             : saving
             ? 'Зберігаю…'
             : `Завершити хід (${pending.length})`}
@@ -477,6 +681,192 @@ export default function GamePage() {
           Скасувати розстановку
         </button>
       </div>
+      {showYourTurn && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 16,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#111827',
+            color: '#fff',
+            padding: '10px 16px',
+            borderRadius: 999,
+            fontSize: 14,
+            fontWeight: 800,
+            zIndex: 50,
+            boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
+          }}
+        >
+          Ваш хід
+        </div>
+      )}
+      {confirm && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: 16,
+          }}
+          onClick={() => setConfirm(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: 16,
+              padding: 16,
+              maxWidth: 360,
+              width: '100%',
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 900, textAlign: 'center' }}>
+              Підтвердити хід
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 14,
+                textAlign: 'center',
+                color: '#374151',
+              }}
+            >
+              За цей хід: <b>+{confirm.total}</b> балів
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                border: '1px solid #eee',
+                borderRadius: 12,
+                padding: 10,
+                maxHeight: 170,
+                overflow: 'auto',
+              }}
+            >
+              {confirm.words.length === 0 ? (
+                <div style={{ fontSize: 13, color: '#6b7280' }}>
+                  (Слова не утворились — перевір розстановку)
+                </div>
+              ) : (
+                confirm.words.map((w, i) => (
+                  <div
+                    key={`${w.word}-${i}`}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: 10,
+                      padding: '6px 0',
+                      borderTop: i === 0 ? 'none' : '1px solid #f2f2f2',
+                      fontSize: 14,
+                    }}
+                  >
+                    <div style={{ fontWeight: 800 }}>{w.word}</div>
+                    <div style={{ color: '#111827', fontWeight: 900 }}>
+                      +{w.score}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {confirm.bonus.length > 0 && (
+              <div style={{ marginTop: 10, fontSize: 12, color: '#6b7280' }}>
+                Бонуси: {confirm.bonus.map((b) => b.label).join(' · ')}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button
+                onClick={() => setConfirm(null)}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  borderRadius: 12,
+                  border: '1px solid #ddd',
+                  background: '#fff',
+                  fontWeight: 800,
+                }}
+              >
+                Ні
+              </button>
+              <button
+                onClick={() => {
+                  setConfirm(null)
+                  commitTurn()
+                }}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  borderRadius: 12,
+                  border: '1px solid #111',
+                  background: '#111',
+                  color: '#fff',
+                  fontWeight: 900,
+                }}
+              >
+                Так
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {errorModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 110,
+            padding: 16,
+          }}
+          onClick={() => setErrorModal(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: 16,
+              padding: 16,
+              maxWidth: 360,
+              width: '100%',
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 900, textAlign: 'center' }}>
+              Помилка ходу
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 14, color: '#374151' }}>
+              {errorModal}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button
+                onClick={() => setErrorModal(null)}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  borderRadius: 12,
+                  border: '1px solid #ddd',
+                  background: '#fff',
+                  fontWeight: 800,
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

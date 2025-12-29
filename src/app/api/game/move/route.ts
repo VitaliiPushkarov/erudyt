@@ -28,6 +28,7 @@ const BodySchema = z.object({
   gameId: z.string().min(1),
   playerId: z.string().min(1),
   placements: z.array(PlacementSchema).min(1).max(7),
+  previewOnly: z.boolean().optional(),
 })
 
 function boardHasAnyTiles(board: (string | null)[][]) {
@@ -75,7 +76,8 @@ function scoreWord(word: string) {
 }
 
 export async function POST(req: Request) {
-  const { gameId, playerId, placements } = BodySchema.parse(await req.json())
+  const body = BodySchema.parse(await req.json())
+  const { gameId, playerId, placements } = body
 
   const game = await prisma.game.findUnique({ where: { id: gameId } })
   if (!game)
@@ -272,34 +274,55 @@ export async function POST(req: Request) {
     }
   }
 
-  function isConnectedPlacements(ps: { r: number; c: number }[]) {
-    const set = new Set(ps.map((p) => `${p.r},${p.c}`))
-    const q: { r: number; c: number }[] = [ps[0]]
-    const seen = new Set<string>([`${ps[0].r},${ps[0].c}`])
+  function arePlacementsConnectedViaBoard(
+    board: (string | null)[][],
+    ps: { r: number; c: number }[]
+  ) {
+    // All placements must be in the same connected component of occupied tiles.
+    // This allows separated placements as long as they connect through existing tiles.
+    const targets = new Set(ps.map((p) => `${p.r},${p.c}`))
+    const start = ps[0]
+    const q: { r: number; c: number }[] = [start]
+    const seen = new Set<string>([`${start.r},${start.c}`])
     const dirs = [
       [1, 0],
       [-1, 0],
       [0, 1],
       [0, -1],
     ] as const
+
     while (q.length) {
       const cur = q.shift()!
       for (const [rr, cc] of dirs) {
         const nr = cur.r + rr
         const nc = cur.c + cc
         const k = `${nr},${nc}`
-        if (!set.has(k) || seen.has(k)) continue
+        if (!inBounds(nr, nc)) continue
+        if (seen.has(k)) continue
+        if (!board[nr][nc]) continue // can only traverse through occupied tiles
         seen.add(k)
         q.push({ r: nr, c: nc })
       }
     }
-    return seen.size === set.size
+
+    // Every placed tile must be reachable via occupied path
+    for (const t of targets) {
+      if (!seen.has(t)) return false
+    }
+    return true
   }
 
   if (allowMultiDirection) {
-    if (placements.length > 1 && !isConnectedPlacements(placements)) {
+    if (
+      placements.length > 1 &&
+      !arePlacementsConnectedViaBoard(nextBoard, placements)
+    ) {
       return NextResponse.json(
-        { ok: false, error: 'Placed tiles must be connected (freestyle mode)' },
+        {
+          ok: false,
+          error:
+            'Слова не зʼєднані (усі нові фішки мають бути в одному “ланцюжку” через уже поставлені літери)',
+        },
         { status: 400 }
       )
     }
@@ -359,7 +382,7 @@ export async function POST(req: Request) {
 
   if (words.length === 0) {
     return NextResponse.json(
-      { ok: false, error: 'Move must form a word' },
+      { ok: false, error: 'Хід має утворити хоча б одне слово' },
       { status: 400 }
     )
   }
@@ -374,15 +397,15 @@ export async function POST(req: Request) {
   const missing = norms.filter((w) => !foundSet.has(w))
   if (missing.length) {
     return NextResponse.json(
-      { ok: false, error: `Unknown word: ${missing[0]}` },
+      { ok: false, error: `Шо це таке: ${missing[0]}` },
       { status: 400 }
     )
   }
 
-  // Score with board multipliers
+  // Score with board multipliers (and keep per-word score)
   let score = 0
 
-  for (const w of words) {
+  const wordsWithScores = words.map((w: any) => {
     let wordScore = 0
     let wordMultiplier = 1
 
@@ -402,11 +425,37 @@ export async function POST(req: Request) {
       wordScore += letterScore
     }
 
-    score += wordScore * wordMultiplier
-  }
+    const wordTotal = wordScore * wordMultiplier
+    score += wordTotal
+    return { ...w, score: wordTotal }
+  })
 
   // Bingo bonus
   if (placements.length === 7) score += 50
+
+  // Preview-only mode: validate + score, but do NOT persist anything
+  if (body.previewOnly) {
+    const bonus: { r: number; c: number; label: string }[] = []
+    for (const p of placements) {
+      const m = BOARD_MULTIPLIERS[p.r][p.c]
+      if (!m) continue
+      if (m && 'word' in m) bonus.push({ r: p.r, c: p.c, label: `${m.word}×С` })
+      if (m && 'letter' in m)
+        bonus.push({ r: p.r, c: p.c, label: `${m.letter}×Б` })
+    }
+
+    return NextResponse.json({
+      ok: true,
+      preview: {
+        total: score,
+        words: wordsWithScores.map((w: any) => ({
+          word: w.word,
+          score: w.score,
+        })),
+        bonus,
+      },
+    })
+  }
 
   // Update rack: remove used tiles, refill from bag
   const nextRack = (state.racks[playerId] || []).slice()
@@ -439,7 +488,11 @@ export async function POST(req: Request) {
     lastMove: {
       by: playerId,
       placed: placements,
-      words: words.map((w) => w.word),
+      words: wordsWithScores.map((w: any) => w.word),
+      wordScores: wordsWithScores.map((w: any) => ({
+        word: w.word,
+        score: w.score,
+      })),
       score,
     },
   }
@@ -456,7 +509,15 @@ export async function POST(req: Request) {
       gameId,
       playerId,
       score,
-      payload: { placements, words: words.map((w) => w.word), score },
+      payload: {
+        placements,
+        words: wordsWithScores.map((w: any) => w.word),
+        wordScores: wordsWithScores.map((w: any) => ({
+          word: w.word,
+          score: w.score,
+        })),
+        score,
+      },
     },
   })
 
